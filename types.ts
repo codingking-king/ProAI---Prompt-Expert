@@ -26,6 +26,7 @@ export interface HistoryItem {
 }
 
 export interface User {
+  uid: string;
   name: string;
   email: string;
   isPremium: boolean;

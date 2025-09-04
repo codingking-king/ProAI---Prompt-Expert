@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { PromptCategory, PromptFormData } from '../types';
 import { INDUSTRIES, OUTPUT_STYLES, TARGET_PLATFORMS } from '../constants';
@@ -8,6 +9,8 @@ import { toast } from 'react-hot-toast';
 import Spinner from './common/Spinner';
 import { useAuth } from '../contexts/AuthContext';
 import Tooltip from './common/Tooltip';
+import { generateKeywords } from '../services/geminiService';
+import { PlusIcon } from './icons/PlusIcon';
 
 interface MainWorkspaceProps {
   category: PromptCategory;
@@ -27,6 +30,8 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({ category, onGenerate, isL
   });
 
   const [generatedPrompt, setGeneratedPrompt] = useState<string>('');
+  const [suggestedKeywords, setSuggestedKeywords] = useState<string[]>([]);
+  const [isGeneratingKeywords, setIsGeneratingKeywords] = useState(false);
 
   useEffect(() => {
     // Reset form when category changes
@@ -38,7 +43,32 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({ category, onGenerate, isL
       constraints: '',
     });
     setGeneratedPrompt('');
+    setSuggestedKeywords([]);
   }, [category]);
+  
+  useEffect(() => {
+    if (formData.useCase.trim().length < 15) {
+      setSuggestedKeywords([]);
+      return;
+    }
+
+    const handler = setTimeout(async () => {
+      setIsGeneratingKeywords(true);
+      try {
+        const keywords = await generateKeywords(formData.useCase);
+        setSuggestedKeywords(keywords);
+      } catch (err) {
+        console.error("Failed to generate keywords:", err);
+        setSuggestedKeywords([]); // Clear on error
+      } finally {
+        setIsGeneratingKeywords(false);
+      }
+    }, 750); // 750ms debounce
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [formData.useCase]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -61,6 +91,13 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({ category, onGenerate, isL
       });
     }
   }, [generatedPrompt]);
+
+  const handleAddKeyword = (keyword: string) => {
+    setFormData(prev => ({
+      ...prev,
+      constraints: prev.constraints ? `${prev.constraints}, ${keyword}` : keyword
+    }));
+  };
 
   const renderSelect = (name: keyof PromptFormData, label: string, options: string[]) => (
     <div>
@@ -129,6 +166,32 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({ category, onGenerate, isL
               className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm py-2 px-3 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
             />
           </div>
+          
+          {(isGeneratingKeywords || suggestedKeywords.length > 0) && (
+            <div className="h-16">
+              <h4 className="text-xs font-semibold tracking-wide uppercase text-slate-500 dark:text-slate-400 mb-2">Keyword Suggestions</h4>
+              {isGeneratingKeywords ? (
+                <div className="flex items-center text-sm text-slate-400 animate-pulse">
+                  Generating keywords...
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {suggestedKeywords.map((keyword, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      onClick={() => handleAddKeyword(keyword)}
+                      className="flex items-center text-xs bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-2.5 py-1 rounded-full hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      <PlusIcon className="w-3 h-3 mr-1.5" />
+                      {keyword}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {renderSelect('industry', 'Industry / Context', INDUSTRIES)}

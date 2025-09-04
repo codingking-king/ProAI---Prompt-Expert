@@ -7,6 +7,30 @@ import { EnvelopeIcon } from './icons/EnvelopeIcon';
 import { UserCircleIcon } from './icons/UserCircleIcon';
 import { toast } from 'react-hot-toast';
 
+const getAuthErrorMessage = (error: any): string => {
+    if (error && typeof error === 'object' && 'code' in error) {
+        switch (error.code) {
+            case 'auth/email-already-in-use':
+                return 'This email address is already in use by another account.';
+            case 'auth/invalid-email':
+                return 'Please enter a valid email address.';
+            case 'auth/weak-password':
+                return 'Password should be at least 6 characters long.';
+            case 'auth/user-not-found':
+            case 'auth/wrong-password':
+            case 'auth/invalid-credential':
+                return 'Invalid email or password. Please try again.';
+            default:
+                console.error("Firebase Auth Error:", error);
+                return 'An unexpected error occurred. Please try again.';
+        }
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return 'An unexpected error occurred. Please try again.';
+};
+
 const InputField: React.FC<{id: string, type: string, placeholder: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, icon: React.ReactNode}> = 
 ({ id, type, placeholder, value, onChange, icon }) => (
     <div className="relative">
@@ -63,7 +87,7 @@ const AuthPage: React.FC = () => {
                 setPassword('');
             }
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+            setError(getAuthErrorMessage(err));
         } finally {
             setIsLoading(false);
         }

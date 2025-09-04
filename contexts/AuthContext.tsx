@@ -1,22 +1,17 @@
 import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
-import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { PromptCategory, User } from '../types';
 import { CATEGORIES, FREE_DAILY_CREDITS } from '../constants';
-
-// The user object stored with password credentials (internal to this module)
-interface StoredUser extends User {
-  passwordDigest: string; 
-}
+import { useLocalStorage } from '../hooks/useLocalStorage';
 
 interface AuthContextType {
   user: User | null;
+  upgradeToPremium: () => Promise<void>;
+  addCredits: (amount: number) => Promise<void>;
+  consumeResource: (category: PromptCategory) => Promise<boolean>;
+  refundResource: (category: PromptCategory) => Promise<void>;
+  // Fix: Add login and signup methods to the context type for AuthPage.tsx
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
-  logout: () => void;
-  upgradeToPremium: () => void;
-  addCredits: (amount: number) => void;
-  consumeResource: (category: PromptCategory) => boolean;
-  refundResource: (category: PromptCategory) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -32,149 +27,114 @@ const getDefaultFreeUsage = () => {
   }, {} as { [key: string]: number });
 };
 
-export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [allUsers, setAllUsers] = useLocalStorage<StoredUser[]>('proai-users', []);
-  const [user, setUser] = useLocalStorage<User | null>('proai-user', null);
-  const [lastLoginDate, setLastLoginDate] = useLocalStorage<string | null>('proai-last-login-date', null);
+const defaultUser: User = {
+  uid: 'local-user',
+  name: 'ProAI User',
+  email: 'user@proai.app',
+  isPremium: false,
+  credits: FREE_DAILY_CREDITS,
+  usage: getDefaultFreeUsage(),
+};
 
+export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [user, setUser] = useLocalStorage<User>('proai-local-user', defaultUser);
+
+  // Daily reset logic
   useEffect(() => {
-    if (user) {
-      const today = new Date().toDateString();
-      if (lastLoginDate !== today) {
-        // Daily resource reset for the currently logged-in user
-        setUser(currentUser => {
-          if (!currentUser) return null;
-          return {
-            ...currentUser,
-            credits: currentUser.isPremium ? PREMIUM_DAILY_CREDITS : FREE_DAILY_CREDITS,
-            usage: currentUser.isPremium ? {} : getDefaultFreeUsage(),
-          }
-        });
-        setLastLoginDate(today);
+    const today = new Date().toDateString();
+    const lastLoginKey = `proai-last-login-local`;
+    const lastLoginDate = localStorage.getItem(lastLoginKey);
+
+    if (lastLoginDate !== today) {
+      setUser(currentUser => ({
+        ...currentUser,
+        credits: currentUser.isPremium ? PREMIUM_DAILY_CREDITS : FREE_DAILY_CREDITS,
+        usage: currentUser.isPremium ? {} : getDefaultFreeUsage(),
+      }));
+      localStorage.setItem(lastLoginKey, today);
+    }
+  }, [setUser]);
+
+  const upgradeToPremium = async (): Promise<void> => {
+    setUser(prevUser => ({
+      ...prevUser,
+      isPremium: true,
+      credits: PREMIUM_DAILY_CREDITS,
+      usage: {},
+    }));
+  };
+
+  const addCredits = async (amount: number): Promise<void> => {
+    setUser(prevUser => ({
+      ...prevUser,
+      credits: prevUser.credits + amount,
+    }));
+  };
+
+  const consumeResource = async (category: PromptCategory): Promise<boolean> => {
+    if (!user) return false;
+
+    let canConsume = false;
+    
+    if (user.isPremium) {
+      if (user.credits >= category.creditCost) {
+        canConsume = true;
+      }
+    } else {
+      const currentUsage = user.usage[category.id] ?? 0;
+      const hasEnoughCredits = user.credits >= category.creditCost;
+      const hasAttemptsLeft = category.dailyLimit !== undefined && currentUsage < category.dailyLimit;
+
+      if (hasEnoughCredits && hasAttemptsLeft) {
+        canConsume = true;
       }
     }
-  }, []);
-
-  const login = (email: string, password: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => { // Simulate async API call
-        const storedUser = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-        if (storedUser && storedUser.passwordDigest === password) { // NOTE: In a real app, never store/compare plaintext passwords
-          const today = new Date().toDateString();
-          // Strip password for session state
-          const { passwordDigest, ...publicUser } = storedUser;
-          setUser(publicUser);
-          setLastLoginDate(today);
-          resolve();
-        } else {
-          reject(new Error("Invalid email or password."));
-        }
-      }, 500);
-    });
-  };
-
-  const signup = (name: string, email: string, password: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-        setTimeout(() => { // Simulate async API call
-            if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-                return reject(new Error("An account with this email already exists."));
-            }
-            const newUser: StoredUser = {
-                name,
-                email,
-                passwordDigest: password,
-                isPremium: false,
-                credits: FREE_DAILY_CREDITS,
-                usage: getDefaultFreeUsage(),
-            };
-            setAllUsers(prev => [...prev, newUser]);
-            
-            // User is not logged in automatically. They must now sign in.
-            resolve();
-        }, 500);
-    });
-  };
-
-  const logout = () => {
-    setUser(null);
-  };
-
-  const upgradeToPremium = () => {
-    setUser(currentUser => {
-      if (currentUser) {
-        return { 
-          ...currentUser, 
-          isPremium: true,
-          credits: PREMIUM_DAILY_CREDITS,
-          usage: {}, 
-        };
-      }
-      return null;
-    });
-  };
-
-  const addCredits = (amount: number) => {
-    setUser(currentUser => {
-        if (currentUser) {
-            return { ...currentUser, credits: currentUser.credits + amount };
-        }
-        return currentUser;
-    });
-  };
-
-  const consumeResource = (category: PromptCategory): boolean => {
-    let canConsume = false;
-    setUser(currentUser => {
-      if (!currentUser) return null;
-
-      if (currentUser.isPremium) {
-        if (currentUser.credits >= category.creditCost) {
-          canConsume = true;
-          return { ...currentUser, credits: currentUser.credits - category.creditCost };
-        }
-      } else { // Free user: must have credits AND daily attempts
-        const currentUsage = currentUser.usage[category.id] ?? 0;
-        const hasEnoughCredits = currentUser.credits >= category.creditCost;
-        const hasAttemptsLeft = category.dailyLimit !== undefined && currentUsage < category.dailyLimit;
-
-        if (hasEnoughCredits && hasAttemptsLeft) {
-          canConsume = true;
-          const newUsage = { ...currentUser.usage, [category.id]: currentUsage + 1 };
-          return { 
-            ...currentUser, 
+    
+    if (canConsume) {
+      setUser(prevUser => {
+        const newUsage = prevUser.isPremium 
+          ? {} 
+          : { ...prevUser.usage, [category.id]: (prevUser.usage[category.id] ?? 0) + 1 };
+        
+        return {
+            ...prevUser,
+            credits: prevUser.credits - category.creditCost,
             usage: newUsage,
-            credits: currentUser.credits - category.creditCost,
-          };
-        }
-      }
-      return currentUser; 
-    });
+        };
+      });
+    }
+    
     return canConsume;
   };
 
-  const refundResource = (category: PromptCategory) => {
-    setUser(currentUser => {
-      if (!currentUser) return null;
-
-      if (currentUser.isPremium) {
-        return { ...currentUser, credits: currentUser.credits + category.creditCost };
-      } else { // Free user: refund both credits and daily attempt
-        const currentUsage = currentUser.usage[category.id] ?? 0;
-        if (currentUsage > 0) {
-            const newUsage = { ...currentUser.usage, [category.id]: currentUsage - 1 };
-            return { 
-                ...currentUser, 
-                usage: newUsage,
-                credits: currentUser.credits + category.creditCost,
-            };
-        }
+  const refundResource = async (category: PromptCategory): Promise<void> => {
+    setUser(prevUser => {
+      const newCredits = prevUser.credits + category.creditCost;
+      let newUsage = prevUser.usage;
+      if (!prevUser.isPremium) {
+          const currentUsage = prevUser.usage[category.id] ?? 0;
+          if (currentUsage > 0) {
+              newUsage = { ...prevUser.usage, [category.id]: currentUsage - 1 };
+          }
       }
-      return currentUser;
+      return { ...prevUser, credits: newCredits, usage: newUsage };
     });
   };
 
+  // Fix: Implement mock login and signup functions to satisfy AuthPage.tsx
+  const login = async (email: string, password: string): Promise<void> => {
+    console.log('Mock login called with:', email, password);
+    // In this local-only setup, we don't need to do anything.
+  };
+
+  const signup = async (name: string, email: string, password: string): Promise<void> => {
+    console.log('Mock signup called with:', name, email, password);
+     // In this local-only setup, we don't need to do anything.
+  };
+
+
   return (
-    <AuthContext.Provider value={{ user, login, signup, logout, upgradeToPremium, addCredits, consumeResource, refundResource }}>
+    <AuthContext.Provider value={{ user, upgradeToPremium, addCredits, consumeResource, refundResource, login, signup }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,5 +1,6 @@
 
-import { GoogleGenAI } from "@google/genai";
+
+import { GoogleGenAI, Type } from "@google/genai";
 import type { PromptCategory, PromptFormData } from '../types';
 
 if (!process.env.API_KEY) {
@@ -54,5 +55,49 @@ export const generatePrompt = async (
   } catch (error) {
     console.error("Error calling Gemini API:", error);
     throw new Error("Failed to generate prompt. Please check your API key and network connection.");
+  }
+};
+
+export const generateKeywords = async (useCase: string): Promise<string[]> => {
+  const prompt = `Based on the following user request for an AI prompt, extract 5 to 7 relevant keywords or short, descriptive phrases that would enhance the final prompt. Focus on key subjects, styles, actions, or modifiers. Return a JSON object with a single key "keywords" which contains an array of strings.
+
+User Request: "${useCase}"`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            keywords: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.STRING,
+                description: 'A relevant keyword or short phrase.'
+              }
+            }
+          }
+        },
+      }
+    });
+
+    const jsonString = response.text;
+    if (!jsonString) {
+      return [];
+    }
+    
+    const parsed = JSON.parse(jsonString);
+    if (parsed && Array.isArray(parsed.keywords)) {
+      return parsed.keywords;
+    }
+
+    return [];
+  } catch (error) {
+    console.error("Error generating keywords from Gemini API:", error);
+    // Return empty array for graceful degradation
+    return [];
   }
 };

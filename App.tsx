@@ -3,7 +3,6 @@ import Sidebar from './components/Sidebar';
 import MainWorkspace from './components/MainWorkspace';
 import HistoryPanel from './components/HistoryPanel';
 import CheckoutPage from './components/CheckoutPage';
-import AuthPage from './components/AuthPage';
 import WelcomePage from './components/WelcomePage';
 import { generatePrompt } from './services/geminiService';
 import type { PromptCategory, PromptFormData, HistoryItem } from './types';
@@ -22,10 +21,10 @@ type View = 'app' | 'checkout';
 type CheckoutMode = 'subscription' | 'topup';
 
 const App: React.FC = () => {
-  const { user, logout, consumeResource, refundResource, upgradeToPremium, addCredits } = useAuth();
+  const { user, consumeResource, refundResource, upgradeToPremium, addCredits } = useAuth();
   
   const [activeCategory, setActiveCategory] = useState<PromptCategory>(CATEGORIES[0]);
-  const historyKey = user ? `proai-history-${user.email}` : 'proai-history-anonymous';
+  const historyKey = user ? `proai-history-${user.uid}` : 'proai-history-local';
   const [history, setHistory] = useLocalStorage<HistoryItem[]>(historyKey, []);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,19 +32,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<View>('app');
   const [checkoutMode, setCheckoutMode] = useState<CheckoutMode>('subscription');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
-  const [isProfileOpen, setProfileOpen] = useState(false);
   const [welcomeSeen, setWelcomeSeen] = useLocalStorage('proai-welcome-seen', false);
-  const profileRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
-        setProfileOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const handleGetStarted = () => {
     setWelcomeSeen(true);
@@ -55,7 +42,7 @@ const App: React.FC = () => {
     if (!user) return null;
     
     // Check if user has enough resources (credits or daily limits)
-    const canGenerate = consumeResource(activeCategory);
+    const canGenerate = await consumeResource(activeCategory);
     if (!canGenerate) {
        // The MainWorkspace button tooltip provides specific feedback.
        // This toast is a general fallback.
@@ -77,7 +64,7 @@ const App: React.FC = () => {
       return result;
     } catch (err) {
       // Refund credits/usage on failure
-      refundResource(activeCategory);
+      await refundResource(activeCategory);
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(errorMessage);
       console.error(err);
@@ -111,21 +98,20 @@ const App: React.FC = () => {
   };
   
   const handleTopUp = () => {
-    setProfileOpen(false);
     setCheckoutMode('topup');
     setView('checkout');
   };
 
-  const handlePaymentSuccess = (type: CheckoutMode, amount?: number) => {
+  const handlePaymentSuccess = async (type: CheckoutMode, amount?: number) => {
     if (type === 'subscription') {
-      upgradeToPremium();
+      await upgradeToPremium();
        toast.success("Welcome to ProAI Plus!");
        const premiumCategory = CATEGORIES.find(c => c.isPremium);
        if (premiumCategory) {
            setActiveCategory(premiumCategory);
        }
     } else if (type === 'topup' && amount) {
-       addCredits(amount);
+       await addCredits(amount);
        toast.success(`${amount} credits added to your account!`);
     }
     setView('app');
@@ -138,9 +124,11 @@ const App: React.FC = () => {
   if (view === 'checkout') {
     return <CheckoutPage mode={checkoutMode} onPaymentSuccess={handlePaymentSuccess} onBack={() => setView('app')} />;
   }
-
+  
+  // No-auth means user is always available
   if (!user) {
-    return <AuthPage />;
+    // This should not happen with the new AuthContext, but it's a safe fallback.
+    return <div>Loading...</div>;
   }
 
   return (
@@ -171,22 +159,6 @@ const App: React.FC = () => {
                         <PlusIcon className="w-4 h-4 text-slate-200"/>
                     </button>
                 </Tooltip>
-            </div>
-            <div className="relative" ref={profileRef}>
-              <button onClick={() => setProfileOpen(!isProfileOpen)} className="flex items-center space-x-2">
-                <img src={`https://api.dicebear.com/8.x/avataaars/svg?seed=${user.name}`} alt="User Avatar" className="w-8 h-8 rounded-full bg-slate-600"/>
-              </button>
-              {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-md shadow-lg z-30">
-                  <div className="px-4 py-2 border-b border-slate-700">
-                    <p className="text-sm font-medium text-slate-200 truncate">{user.name}</p>
-                    <p className="text-xs text-slate-400 truncate">{user.email}</p>
-                    <p className="text-xs text-slate-400 mt-1">{user.isPremium ? 'ProAI Plus Member' : 'Free Member'}</p>
-                  </div>
-                  <a href="#" onClick={handleTopUp} className="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700">Top-up Credits</a>
-                  <a href="#" onClick={logout} className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-slate-700">Logout</a>
-                </div>
-              )}
             </div>
           </div>
         </header>
